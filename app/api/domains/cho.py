@@ -889,7 +889,7 @@ async def handle_osu_login_request(
         player.bancho_priv | ClientPrivileges.SUPPORTER,
     )
 
-    data += WELCOME_NOTIFICATION
+    # data += WELCOME_NOTIFICATION
 
     # send all appropriate channel info to our player.
     # the osu! client will attempt to join the channels.
