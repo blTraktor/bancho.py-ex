@@ -210,8 +210,8 @@ async def bancho_handler(
         # tell their client to reconnect immediately.
         return Response(
             content=(
-                app.packets.notification("Server has restarted.")
-                + app.packets.restart_server(0)  # ms until reconnection
+                # app.packets.notification("Server has restarted.")
+                app.packets.restart_server(0)  # ms until reconnection
             ),
         )
 
