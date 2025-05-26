@@ -1231,58 +1231,103 @@ str_priv_dict = {
 
 
 @command(Privileges.DEVELOPER, hidden=True)
-async def addpriv(ctx: Context) -> str | None:
-    """Set privileges for a specified player (by name)."""
+async def addpriv(ctx: Context) -> str:
     if len(ctx.args) < 2:
-        return "Invalid syntax: !addpriv <name> <role1 role2 role3 ...>"
+        return "Usage: !addpriv <username> <priv1 priv2 ...>"
+
+    username = ctx.args[0]
+    priv_names = ctx.args[1:]
+
+    user = await app.state.sessions.players.from_cache_or_sql(name=username)
+    if not user:
+        return f"User '{username}' not found."
+
+    cached = await app.state.services.redis.get(f"shiina:user:{user.id}")
+
+    if cached is not None:
+        user_data = orjson.loads(cached)
+        groups = user_data.get("groups", [])
+    else:
+        groups = []
+
+
 
     bits = Privileges(0)
+    for name in priv_names:
+        if name.lower() not in str_priv_dict:
+            return f"Unknown privilege: {name}"
+        bits |= str_priv_dict[name.lower()]
 
-    for m in [m.lower() for m in ctx.args[1:]]:
-        if m not in str_priv_dict:
-            return f"Not found: {m}."
+    if bits & Privileges.DONATOR:
+        return "Use !givedonator for donor privileges."
 
-        bits |= str_priv_dict[m]
+    await user.add_privs(bits)
 
-    target = await app.state.sessions.players.from_cache_or_sql(name=ctx.args[0])
-    if not target:
-        return "Could not find user."
+    user_dict = {
+        "id": user.id,
+        "name": user.name,
+        "safe_name": user.safe_name,
+        "priv": int(user.priv),
+        "groups": groups,
+    }
 
-    if bits & Privileges.DONATOR != 0:
-        return "Please use the !givedonator command to assign donator privileges to players."
+    await app.state.services.redis.set(
+        f"shiina:user:{user.id}",
+        orjson.dumps(user_dict)
+    )
 
-    await target.add_privs(bits)
-    return f"Updated {target}'s privileges."
+    return f"Updated privileges for {user.name}."
 
 
 @command(Privileges.DEVELOPER, hidden=True)
-async def rmpriv(ctx: Context) -> str | None:
-    """Set privileges for a specified player (by name)."""
+async def rmpriv(ctx: Context) -> str:
     if len(ctx.args) < 2:
-        return "Invalid syntax: !rmpriv <name> <role1 role2 role3 ...>"
+        return "Usage: !rmpriv <username> <priv1 priv2 ...>"
+
+    username = ctx.args[0]
+    priv_names = ctx.args[1:]
+
+    user = await app.state.sessions.players.from_cache_or_sql(name=username)
+    if not user:
+        return f"User '{username}' not found."
+
+    cached = await app.state.services.redis.get(f"shiina:user:{user.id}")
+
+    if cached is not None:
+        user_data = orjson.loads(cached)
+        groups = user_data.get("groups", [])
+    else:
+        groups = []
 
     bits = Privileges(0)
+    for name in priv_names:
+        if name.lower() not in str_priv_dict:
+            return f"Unknown privilege: {name}"
+        bits |= str_priv_dict[name.lower()]
 
-    for m in [m.lower() for m in ctx.args[1:]]:
-        if m not in str_priv_dict:
-            return f"Not found: {m}."
+    await user.remove_privs(bits)
 
-        bits |= str_priv_dict[m]
-
-    target = await app.state.sessions.players.from_cache_or_sql(name=ctx.args[0])
-    if not target:
-        return "Could not find user."
-
-    await target.remove_privs(bits)
-
-    if bits & Privileges.DONATOR != 0:
-        target.donor_end = 0
-        await app.state.services.database.execute(
+    if bits & Privileges.DONATOR:
+        user.donor_end = 0
+        await state.services.database.execute(
             "UPDATE users SET donor_end = 0 WHERE id = :user_id",
-            {"user_id": target.id},
+            {"user_id": user.id}
         )
 
-    return f"Updated {target}'s privileges."
+    user_dict = {
+        "id": user.id,
+        "name": user.name,
+        "safe_name": user.safe_name,
+        "priv": int(user.priv),
+        "groups": groups,
+    }
+
+    await app.state.services.redis.set(
+        f"shiina:user:{user.id}",
+        orjson.dumps(user_dict)
+    )
+
+    return f"Updated privileges for {user.name}."
 
 
 @command(Privileges.DEVELOPER, hidden=True)
