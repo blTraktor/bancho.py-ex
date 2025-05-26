@@ -6,7 +6,6 @@ from datetime import date
 from app.logging import Ansi
 from app.logging import log
 
-
 def read_bool(value: str) -> bool:
     return value.lower() in ("true", "1", "yes")
 
