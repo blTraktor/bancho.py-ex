@@ -86,6 +86,8 @@ from app.discord.utils.notify import notify_new_score
 BEATMAPS_PATH = SystemPath.cwd() / ".data/osu"
 REPLAYS_PATH = SystemPath.cwd() / ".data/osr"
 SCREENSHOTS_PATH = SystemPath.cwd() / ".data/ss"
+SEASONAL_BGS_PATH = SystemPath.cwd() / ".data/assets/seasonal-backgrounds"
+SUBFOLDER = os.getenv("SEASONAL_BGS_SUBFOLDER", "").strip().strip("/")
 
 file_path = "caps.json"
 
@@ -2242,7 +2244,33 @@ async def osuMarkAsRead(
 
 @router.get("/web/osu-getseasonal.php")
 async def osuSeasonal() -> Response:
-    return ORJSONResponse(app.settings.SEASONAL_BGS)
+    DOMAIN = os.getenv("DOMAIN")
+    if not DOMAIN:
+        raise HTTPException(status_code=500, detail="DOMAIN env variable is not set")
+
+    if SUBFOLDER:
+        TARGET_DIR = SEASONAL_BGS_PATH / SUBFOLDER
+    else:
+        TARGET_DIR = SEASONAL_BGS_PATH
+
+    if not TARGET_DIR.exists() or not TARGET_DIR.is_dir():
+        raise HTTPException(status_code=404, detail="Seasonal backgrounds folder not found")
+
+    try:
+        TARGET_DIR.relative_to(SEASONAL_BGS_PATH)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid subfolder path")
+
+    base_url = f"https://assets.{DOMAIN}/seasonal-backgrounds/"
+    if SUBFOLDER:
+        base_url += SUBFOLDER + "/"
+
+    result = []
+    for file in TARGET_DIR.iterdir():
+        if file.is_file() and file.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            result.append(base_url + file.name)
+
+    return ORJSONResponse(result)
 
 
 @router.get("/web/bancho_connect.php")

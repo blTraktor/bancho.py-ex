@@ -27,6 +27,8 @@ T = TypeVar("T")
 
 DATA_PATH = Path.cwd() / ".data"
 ACHIEVEMENTS_ASSETS_PATH = DATA_PATH / "assets/medals/client"
+SEASONAL_BGS_PATH = DATA_PATH / "assets/seasonal-backgrounds"
+DEFAULT_SEASONAL_BGS_PATH = DATA_PATH / "assets/seasonal-backgrounds/default.jpg"
 DEFAULT_AVATAR_PATH = DATA_PATH / "avatars/default.jpg"
 
 
@@ -105,6 +107,16 @@ def download_default_avatar(default_avatar_path: Path) -> None:
 
     log("Downloaded default avatar.", Ansi.LGREEN)
     default_avatar_path.write_bytes(resp.content)
+
+def download_default_seasonal_background(seasonal_background_path: Path) -> None:
+    resp = httpx.get("https://i.cmyui.xyz/T74WiQG5wVyf.jpg")
+
+    if resp.status_code != 200:
+        log("Failed to fetch default seasonal background.")
+        return
+
+    log("Downloaded default seasonal background")
+    seasonal_background_path.write_bytes(resp.content)
 
 
 def has_internet_connectivity(timeout: float = 1.0) -> bool:
@@ -207,6 +219,10 @@ def ensure_persistent_volumes_are_available() -> None:
     # download a default avatar image for new users
     if not DEFAULT_AVATAR_PATH.exists():
         download_default_avatar(DEFAULT_AVATAR_PATH)
+
+    if not SEASONAL_BGS_PATH.exists():
+        SEASONAL_BGS_PATH.mkdir(parents=True)
+        download_default_seasonal_background(DEFAULT_SEASONAL_BGS_PATH)
 
 
 def is_running_as_admin() -> bool:
