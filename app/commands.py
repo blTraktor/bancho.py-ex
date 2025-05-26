@@ -366,7 +366,7 @@ async def maplink(ctx: Context) -> str | None:
     return f"[{app.settings.MIRROR_DOWNLOAD_ENDPOINT}/{bmap.set_id} {bmap.full_name}]"
 
 
-@command(Privileges.UNRESTRICTED, aliases=["last", "r"])
+@command(Privileges.UNRESTRICTED, aliases=["last"])
 async def recent(ctx: Context) -> str | None:
     """Show information about a player's most recent score."""
     if ctx.args:
@@ -1426,6 +1426,267 @@ async def server(ctx: Context) -> str | None:
             "requirements",
             requirements_info,
         ),
+    )
+
+@command(Privileges.UNRESTRICTED)
+async def r(ctx: Context) -> str | None:
+    "Recommends a map based on your PP and preferences. !r help for more info."
+    import random
+    import tempfile
+    import aiohttp
+    import os
+    import math
+    from akatsuki_pp_py import Beatmap as AkaBeatmap, Calculator
+
+    MODS_MAP = {
+        "HD": 1 << 3,  # 8
+        "HR": 1 << 4,  # 16
+        "DT": 1 << 6,  # 64
+        "RX": 1 << 7,  # 128 (Relax)
+        "NC": (1 << 6) | (1 << 9),  # 64 | 512 = 576
+        "FL": 1 << 10,  # 1024
+    }
+
+    def mods_to_int(mods: list[str]) -> int:
+        # Убираем DT если есть NC
+        if "NC" in mods and "DT" in mods:
+            mods.remove("DT")
+        mods_int = sum(MODS_MAP.get(m, 0) for m in mods)
+        return mods_int
+
+    def parse_mods(mods_input: str) -> list[str]:
+        mods_input = mods_input.upper().replace(" ", "")
+        known_mods = list(MODS_MAP.keys())
+        user_mods = []
+        i = 0
+        while i < len(mods_input):
+            for mod in known_mods:
+                if mods_input.startswith(mod, i):
+                    user_mods.append(mod)
+                    i += len(mod)
+                    break
+            else:
+                i += 1
+        return user_mods
+
+    if ctx.args and ctx.args[0].lower() == "help":
+        return (
+            "Usage: !r [mode] [mods]\n"
+            "Recommends a map based on your PP and preferences.\n\n"
+            "Available modes: std (default), taiko, ctb, mania\n"
+            "Available mods: HD, HR, DT, RX, NC, FL\n"
+            "Notes:\n"
+            "- If no mode is specified, std is used.\n"
+            "- If no mods are specified, NoMod is used.\n"
+            "- DT and HT cannot be used together.\n"
+            "- RX can be combined with any mode.\n\n"
+            "Examples:\n"
+            "!r - Recommends a std map with NoMod.\n"
+            "!r taiko - Recommends a Taiko map with NoMod.\n"
+            "!r ctb RX DT - Recommends a Catch map with RXDT.\n"
+            "!r mania HD - Recommends a Mania map with HD."
+        )
+
+    game_mode_arg = ""
+    mods_input = ""
+    if ctx.args:
+        if len(ctx.args) > 1:
+            game_mode_arg = ctx.args[0].lower()
+            mods_input = " ".join(ctx.args[1:])
+        elif len(ctx.args) == 1:
+            game_mode_arg = ctx.args[0].lower()
+
+    game_mode = 0
+    is_rx = False
+    if not game_mode_arg:
+        game_mode = 0
+    elif game_mode_arg == "taiko":
+        game_mode = 1
+    elif game_mode_arg == "ctb":
+        game_mode = 2
+    elif game_mode_arg == "mania":
+        game_mode = 3
+    else:
+        mods_input = game_mode_arg + " " + mods_input
+
+    user_mods = parse_mods(mods_input)
+    has_user_mods = len(user_mods) > 0
+    if "RX" in user_mods:
+        is_rx = True
+        user_mods.remove("RX")
+
+    if mods_input and not has_user_mods:
+        return "Incorrect mods. Available mods: " + ", ".join(MODS_MAP.keys()) + ". Available modes: std, taiko, ctb, mania."
+
+    if "DT" in user_mods and "HT" in user_mods:
+        return "DT and HT cannot be used together."
+
+    final_mods = []
+    if has_user_mods:
+        final_mods = user_mods.copy()
+        if "DT" in final_mods:
+            final_mods = ["DT"]
+            if random.random() < 0.25 and "HR" not in final_mods:
+                final_mods.append("HR")
+            if random.random() < 0.1 and "FL" not in final_mods:
+                final_mods.append("FL")
+        elif "HT" in final_mods:
+            final_mods = ["HT"]
+            if random.random() < 0.1 and "FL" not in final_mods:
+                final_mods.append("FL")
+    else:
+        final_mods = []
+
+    if is_rx and "RX" not in final_mods:
+        final_mods.append("RX")
+
+    db_mode = game_mode
+    if is_rx:
+        if game_mode == 0:
+            db_mode = 4  # osu! Relax
+        elif game_mode == 1:
+            db_mode = 5  # Taiko Relax
+        elif game_mode == 2:
+            db_mode = 6  # Catch Relax
+
+    user_stats = await app.state.services.database.fetch_one(
+        "SELECT pp FROM stats WHERE id = :user_id AND mode = :mode",
+        {"user_id": ctx.player.id, "mode": db_mode},
+    )
+    if not user_stats:
+        return "Couldn't find your stats"
+
+    pp = user_stats["pp"]
+
+    target_star = 2.0 + 1.8 * math.log(1 + pp / 1000)
+
+    if pp < 1000:
+        target_star = min(target_star, 1.8)
+
+    target_star = max(target_star, 1.0)
+    target_star = min(target_star, 7.0)
+    min_star = max(target_star - 0.5, 1.0)
+    max_star = target_star + 0.5
+
+    mods_int = mods_to_int(final_mods)
+    mods_str = "".join([mod for mod in final_mods if mod != "RX"]) or "NoMod"
+    if is_rx:
+        mods_str = f"RX{mods_str}"
+
+    async with aiohttp.ClientSession() as session:
+        offset = 0
+        max_pages = 10
+        all_beatmaps = []
+        # Choosing genre: 75% Anime, 20% Video Game, 5% Pop, 1% без жанра
+        genre_roll = random.random()
+        if genre_roll < 0.75:  # 75% Anime
+            genre_id = 9
+        elif genre_roll < 0.95:  # 20% Video Game
+            genre_id = 10
+        elif genre_roll < 0.99:  # 4% Pop
+            genre_id = 2
+        else:  # 1% without genre
+            genre_id = None
+        while offset < max_pages * 50:  #50 maps per page, 10 pages maximum
+            params = {
+                "min_sr": min_star,
+                "max_sr": max_star,
+                "mode": game_mode,
+                "sort": "ranked_date:desc",
+                "status": 1,
+                "amount": 50,
+                "offset": offset,
+            }
+            if genre_id is not None:
+                params["g"] = genre_id
+            async with session.get(
+                "https://osu.direct/api/search",
+                params=params
+            ) as resp:
+                if resp.status != 200:
+                    return "Error when accessing osu.direct"
+                data = await resp.json()
+            if not data:
+                break
+            all_beatmaps.extend(data)
+            offset += 50
+
+    if not all_beatmaps:
+        return f"No maps found in the range {min_star:.1f}★–{max_star:.1f}★."
+
+    random.shuffle(all_beatmaps)
+
+    all_suitable_beatmaps = []
+    for beatmap in all_beatmaps:
+        if not beatmap.get("ChildrenBeatmaps"):
+            continue
+        suitable_beatmaps = [
+            (beatmap, b) for b in beatmap["ChildrenBeatmaps"]
+            if min_star <= b["DifficultyRating"] <= max_star
+        ]
+        all_suitable_beatmaps.extend(suitable_beatmaps)
+
+    if not all_suitable_beatmaps:
+        #If no suitable maps are found, select the nearest one.
+        beatmap = random.choice(all_beatmaps)
+        child_beatmap = min(
+            beatmap["ChildrenBeatmaps"],
+            key=lambda b: abs(b["DifficultyRating"] - target_star)
+        )
+    else:
+        beatmap, child_beatmap = random.choice(all_suitable_beatmaps)
+
+    osu_url = f"https://osu.direct/api/osu/{child_beatmap['BeatmapID']}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(osu_url) as resp:
+            if resp.status != 200:
+                return "Failed to download the .osu file."
+            osu_data = await resp.text()
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8', suffix=".osu") as temp_osu_file:
+            temp_osu_file.write(osu_data)
+            osu_path = temp_osu_file.name
+
+        akatsuki_map = AkaBeatmap(path=osu_path)
+        calc = Calculator()
+        calc.set_mods(mods_int)
+
+        max_perf = calc.performance(akatsuki_map)
+        star_rating = max_perf.difficulty.stars
+
+        pp_results = []
+        for acc in [90.0, 95.0, 98.0, 100.0]:
+            try:
+                calc.set_acc(acc)
+                calc.set_difficulty(max_perf.difficulty)
+                result = calc.performance(akatsuki_map)
+                pp_results.append(f"{acc:.0f}%: {result.pp:.2f}pp")
+            except Exception as e:
+                pp_results.append(f"{acc:.0f}%: error ({str(e)})")
+
+        pp_section = " " + " | ".join(pp_results)
+        star_section = f" ({star_rating:.2f}★)"
+
+    finally:
+        os.remove(osu_path)
+    mode_str = ""
+    if game_mode == 0:
+        mode_str += "std"
+    elif game_mode == 1:
+        mode_str += "Taiko"
+    elif game_mode == 2:
+        mode_str += "Catch"
+    elif game_mode == 3:
+        mode_str += "Mania"
+
+    return (
+        f"[https://osu.{app.settings.DOMAIN}/b/{child_beatmap['BeatmapID']} {beatmap['Artist']} - {beatmap['Title']} [{child_beatmap['DiffName']}]] "
+        f"{star_section} "
+        f"{mode_str} {mods_str} "
+        f"{pp_section}\n"
+        f"Alternate link: [https://catboy.best/d/{child_beatmap['ParentSetID']} Catboy.best]"
     )
 
 
