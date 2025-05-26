@@ -69,7 +69,6 @@ from app.repositories import users as users_repo
 from app.usecases.performance import ScoreParams
 
 from app.discord.utils.notify import notify_change_map_status
-from app.discord.utils.notify import notify_change_map_status
 
 if TYPE_CHECKING:
     from app.objects.channel import Channel
