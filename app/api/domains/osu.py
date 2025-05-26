@@ -81,6 +81,8 @@ from app.usecases import user_achievements as user_achievements_usecases
 from app.utils import escape_enum
 from app.utils import pymysql_encode
 
+from app.discord.utils.notify import notify_new_score
+
 BEATMAPS_PATH = SystemPath.cwd() / ".data/osu"
 REPLAYS_PATH = SystemPath.cwd() / ".data/osr"
 SCREENSHOTS_PATH = SystemPath.cwd() / ".data/ss"
@@ -1154,6 +1156,26 @@ if(not app.settings.DISALLOW_OLD_CLIENTS):
             Ansi.LGREEN,
         )
 
+        await notify_new_score(
+            player=score.player.name,
+            player_id=score.player.id,
+            map_id=score.bmap.id,
+            map_set_id=score.bmap.set_id,
+            map_name=f"[{score.mode!r}] {score.bmap.artist} - {score.bmap.title} [{score.bmap.version}]",
+            grade=score.grade.name,
+            mods=f"{score.mods!r}",
+            pp=f"{score.pp:,.2f}",
+            accuracy=f"{score.acc:,.2f}%",
+            max_combo=score.max_combo,
+            rank=score.rank,
+            n300=score.n300,
+            n100=score.n100,
+            n50=score.n50,
+            nmiss=score.nmiss,
+            bmap_status=bmap.status.name,
+            is_perfect=score.perfect
+        )
+
         return Response(response)
 
 
@@ -1418,39 +1440,39 @@ async def osuSubmitModularSelector(
                     assert announce_chan is not None
                     announce_chan.send(" ".join(ann), sender=score.player, to_self=True)
 
-                    if(app.settings.ENABLE_FIRST_PLACES_WEBHOOK):
-                        embed = Embed(
-                        title=f"#1 achieved by {score.player.name}",
-                        description=f"{score.player.name} has achieved #1 on \nhttps://{app.settings.DOMAIN}/b/{score.bmap.id}",
-                        color=0xFFD700,
-                        timestamp=datetime.now(timezone.utc).isoformat(),
-                        )
-
-                        embed.add_field(name="Accuracy", value=f"{score.acc:.2f}%", inline=True)
-                        embed.add_field(name="Performance", value=f"{performance}", inline=True)
-                        embed.add_field(name="Combo", value=f"{score.max_combo}x", inline=True)
-                        embed.add_field(name="Misses", value=f"{score.nmiss}", inline=True)
-
-                        if score.mods:
-                            embed.add_field(name="Mods", value=f"{score.mods!r}", inline=True)
-
-                        if prev_n1:
-                            if score.player.id != prev_n1["id"]:
-                                embed.add_field(
-                                name="Previous #1",
-                                value=f"[{prev_n1['name']}](https://{app.settings.DOMAIN}/u/{prev_n1['id']})",
-                                inline=False,
-                                )
-
-                        embed.set_thumbnail(url=f"https://a.{app.settings.DOMAIN}/{score.player.id}")
-                        webhook_url = app.settings.FIRST_PLACES_WEBHOOK
-                        webhook = Webhook(url=webhook_url)
-                        webhook.add_embed(embed)
-
-                        asyncio.create_task(webhook.post())
-
-                        if app.metrics.enabled:
-                            app.metrics.increment("ex_first_place_webhook")
+                    # if(app.settings.ENABLE_FIRST_PLACES_WEBHOOK):
+                    #     embed = Embed(
+                    #     title=f"#1 achieved by {score.player.name}",
+                    #     description=f"{score.player.name} has achieved #1 on \nhttps://{app.settings.DOMAIN}/b/{score.bmap.id}",
+                    #     color=0xFFD700,
+                    #     timestamp=datetime.now(timezone.utc).isoformat(),
+                    #     )
+                    #
+                    #     embed.add_field(name="Accuracy", value=f"{score.acc:.2f}%", inline=True)
+                    #     embed.add_field(name="Performance", value=f"{performance}", inline=True)
+                    #     embed.add_field(name="Combo", value=f"{score.max_combo}x", inline=True)
+                    #     embed.add_field(name="Misses", value=f"{score.nmiss}", inline=True)
+                    #
+                    #     if score.mods:
+                    #         embed.add_field(name="Mods", value=f"{score.mods!r}", inline=True)
+                    #
+                    #     if prev_n1:
+                    #         if score.player.id != prev_n1["id"]:
+                    #             embed.add_field(
+                    #             name="Previous #1",
+                    #             value=f"[{prev_n1['name']}](https://{app.settings.DOMAIN}/u/{prev_n1['id']})",
+                    #             inline=False,
+                    #             )
+                    #
+                    #     embed.set_thumbnail(url=f"https://a.{app.settings.DOMAIN}/{score.player.id}")
+                    #     webhook_url = app.settings.FIRST_PLACES_WEBHOOK
+                    #     webhook = Webhook(url=webhook_url)
+                    #     webhook.add_embed(embed)
+                    #
+                    #     asyncio.create_task(webhook.post())
+                    #
+                    #     if app.metrics.enabled:
+                    #         app.metrics.increment("ex_first_place_webhook")
 
 
             # this score is our best score.
@@ -1748,6 +1770,26 @@ async def osuSubmitModularSelector(
         f"[{score.mode!r}] {score.player} submitted a score! "
         f"({score.status!r}, {score.pp:,.2f}pp / {stats.pp:,}pp)",
         Ansi.LGREEN,
+    )
+
+    await notify_new_score(
+        player=score.player.name,
+        player_id=score.player.id,
+        map_id=score.bmap.id,
+        map_set_id=score.bmap.set_id,
+        map_name=f"[{score.mode!r}] {score.bmap.artist} - {score.bmap.title} [{score.bmap.version}]",
+        grade=score.grade.name,
+        mods=f"{score.mods!r}",
+        pp=f"{score.pp:,.2f}",
+        accuracy=f"{score.acc:,.2f}%",
+        max_combo=score.max_combo,
+        rank=score.rank,
+        n300=score.n300,
+        n100=score.n100,
+        n50=score.n50,
+        nmiss=score.nmiss,
+        bmap_status=bmap.status.name,
+        is_perfect=score.perfect
     )
 
     return Response(response)

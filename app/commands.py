@@ -68,6 +68,9 @@ from app.repositories import tourney_pools as tourney_pools_repo
 from app.repositories import users as users_repo
 from app.usecases.performance import ScoreParams
 
+from app.discord.utils.notify import notify_change_map_status
+from app.discord.utils.notify import notify_change_map_status
+
 if TYPE_CHECKING:
     from app.objects.channel import Channel
 
@@ -702,6 +705,19 @@ async def _map(ctx: Context) -> str | None:
     # XXX: not sure if getting md5s from sql
     # for updating cache would be faster?
     # surely this will not scale as well...
+
+    requester = await app.state.services.database.fetch_one(
+        """
+        SELECT 
+            map_requests.player_id AS player_id,
+            users.name AS player_name
+        FROM map_requests
+        JOIN users ON users.id = map_requests.player_id
+        WHERE map_requests.map_id = :map_id AND map_requests.active = 1
+        """,
+        {"map_id": bmap.id},
+    )
+
     ranktype = None
     async with app.state.services.database.transaction():
         if ctx.args[1] == "set":
@@ -740,8 +756,30 @@ async def _map(ctx: Context) -> str | None:
     pubsub = app.state.services.redis.pubsub()
     data = json.dumps({"map_ids": modified_beatmap_ids, "ranktype": ranktype, "type": ctx.args[0]})
     await pubsub.execute_command("PUBLISH", "ex:map_status_change", data)
-    return f"{bmap.embed} updated to {new_status!s}."
 
+    if requester:
+
+        map_id = bmap.id
+
+        await notify_change_map_status(
+            name=bmap,
+            status=ctx.args[0],
+            requester=requester['player_name'],
+            map_id=map_id,
+            map_set_id=bmap.set_id,
+            accepted_by=ctx.player.name
+        )
+    else:
+        map_id = bmap.id
+
+        await notify_change_map_status(
+            name=bmap,
+            status=ctx.args[0],
+            map_id=map_id,
+            map_set_id=bmap.set_id,
+            accepted_by=ctx.player.name)
+
+    return f"{bmap.embed} updated to {new_status!s}."
 
 """ Mod commands
 # The commands below are somewhat dangerous,
