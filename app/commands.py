@@ -590,8 +590,8 @@ async def request(ctx: Context) -> str | None:
 
     bmap = ctx.player.last_np["bmap"]
 
-    if bmap.status != RankedStatus.Pending:
-        return "Only pending maps may be requested for status change."
+    if bmap.status == RankedStatus.Ranked or bmap.status == RankedStatus.Approved:
+        return "Only pending/loved maps may be requested for status change."
 
     map_requests = await map_requests_repo.fetch_all(
         map_id=bmap.id,
