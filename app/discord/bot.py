@@ -1,20 +1,17 @@
 # app/bot.py
+import asyncio
+
 import disnake
 from disnake.ext import commands
 from disnake.ext import commands
 from disnake import ButtonStyle, Permissions
 from disnake.ui import Button, View
 
+import app.state.sessions
 from app.discord.config import DISCORD_TICKETS_ALLOWED_USER_IDS, DISCORD_TICKETS_AUTHORIZED_ROLE_IDS
 
 bot = commands.Bot(command_prefix="t!", intents=disnake.Intents.all(), sync_commands_debug=True, help_command=None)
 
-@bot.event
-async def on_ready():
-    activity = disnake.Game(name="osu!")
-    await bot.change_presence(activity=activity)
-    print(f"Logged in as {bot.user.name} ({bot.user.id})")
-    print(f"Synced commands: {[cmd.name for cmd in bot.application_commands]}")
 
 class TicketCreateView(disnake.ui.View):
     def __init__(self):
@@ -97,10 +94,26 @@ class TicketCloseView(disnake.ui.View):
         await inter.response.send_message("✏️ Closing the ticket...")
         await inter.channel.delete()
 
+async def update_presence():
+    last_count = None
+    while True:
+        try:
+            current_count = len([p for p in app.state.sessions.players if not p.is_bot_client])
+            if current_count != last_count:
+                activity = disnake.Game(name=f"osu! | {current_count} players online")
+                await bot.change_presence(status=disnake.Status.online, activity=activity)
+                last_count = current_count
+            await asyncio.sleep(10)
+        except Exception as e:
+            print(f"Error updating presence: {e}")
+            await asyncio.sleep(10)
+
 @bot.event
 async def on_ready():
-    print(f"Bot is ready. Logged in as {bot.user}")
-    bot.add_view(TicketCreateView())
+    print(f"Logged in as {bot.user.name} ({bot.user.id})")
+    print(f"Synced commands: {[cmd.name for cmd in bot.application_commands]}")
+    asyncio.create_task(update_presence())
+
 
 @bot.command()
 async def send_ticket_message(ctx, channel: disnake.TextChannel = None):
