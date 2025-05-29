@@ -68,7 +68,7 @@ from app.repositories import tourney_pools as tourney_pools_repo
 from app.repositories import users as users_repo
 from app.usecases.performance import ScoreParams
 
-from app.discord.utils.notify import notify_change_map_status
+from app.discord.utils.notify import notify_change_map_status, notify_new_map_request
 
 if TYPE_CHECKING:
     from app.objects.channel import Channel
@@ -602,6 +602,16 @@ async def request(ctx: Context) -> str | None:
         return "You already have an active nomination request for that map."
 
     await map_requests_repo.create(map_id=bmap.id, player_id=ctx.player.id, active=True)
+    print(bmap.status.name)
+
+    await notify_new_map_request(
+        requester=ctx.player.name,
+        requester_id=ctx.player.id,
+        map_name=bmap.full_name,
+        status=bmap.status.name,
+        map_id=bmap.id,
+        map_set_id=bmap.set_id
+    )
 
     return "Request submitted."
 
