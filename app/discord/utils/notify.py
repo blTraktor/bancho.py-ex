@@ -2,7 +2,10 @@ from app.discord import bot
 from disnake import Embed, Colour
 from typing import Optional
 from app.settings import DOMAIN
-from app.discord.config import DISCORD_NOTIFY_NEW_MAP_STATUS_CHANNEL_ID, DISCORD_NOTIFY_NEW_SCORE_CHANNEL_ID
+from app.discord.config import (DISCORD_NOTIFY_NEW_MAP_STATUS_CHANNEL_ID, DISCORD_NOTIFY_NEW_SCORE_CHANNEL_ID,
+                                DISCORD_NOTIFY_NEW_MAP_REQUEST_CHANNEL_ID)
+
+from datetime import datetime, timezone
 
 mods_emoji = {
     'DT': '<:DT:1367603164538212514>',
@@ -143,3 +146,19 @@ async def notify_change_map_status(name: str, status: str, accepted_by: str, map
             embed.set_image(url=f"https://assets.ppy.sh/beatmaps/{map_set_id}/covers/cover.jpg")
             await channel.send(embed=embed)
 
+
+async def notify_new_map_request(requester: str, requester_id: int, map_name: str, status: str, map_id: int, map_set_id: set):
+    channel = bot.get_channel(DISCORD_NOTIFY_NEW_MAP_REQUEST_CHANNEL_ID)
+    if channel:
+        embed = Embed(
+            title="New map request",
+            description=f"[**{map_name}**](https://{DOMAIN}/b/{map_id})",
+            color=Colour.green()
+        )
+        embed.set_thumbnail(f"https://a.{DOMAIN}/{requester_id}")
+
+        embed.add_field(name="Requester", value=requester, inline=True)
+        embed.add_field(name="Status", value=f'{await extract_bmap_status_emoji(status)}{status}', inline=True)
+        embed.set_image(url=f"https://assets.ppy.sh/beatmaps/{map_set_id}/covers/cover.jpg")
+        embed.timestamp = datetime.now(timezone.utc)
+        await channel.send("<@&1367627078580572192>", embed=embed)
