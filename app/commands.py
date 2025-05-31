@@ -1613,13 +1613,21 @@ async def r(ctx: Context) -> str | None:
 
     pp = user_stats["pp"]
 
-    target_star = 2.0 + 1.8 * math.log(1 + pp / 1000)
+    if db_mode == 0 or db_mode == 4:  # std или Relax(std)
+        target_star = min(2.0 + 1.0 * math.log(1 + pp / 1200), 4.2)
+    elif db_mode == 5:  # Taiko Relax
+        target_star = min(3.0 + 1.2 * math.log(1 + pp / 1200), 5.5)
+    elif db_mode == 6:  # Catch Relax
+        target_star = min(2.5 + 1.0 * math.log(1 + pp / 1200), 5.0)
+    elif db_mode == 3:  # Mania
+        target_star = min(2.0 + 0.8 * math.log(1 + pp / 1200), 4.5)
+    else:  # default std
+        target_star = min(2.0 + 1.0 * math.log(1 + pp / 1200), 4.2)
 
     if pp < 1000:
         target_star = min(target_star, 1.8)
 
     target_star = max(target_star, 1.0)
-    target_star = min(target_star, 7.0)
     min_star = max(target_star - 0.5, 1.0)
     max_star = target_star + 0.5
 
