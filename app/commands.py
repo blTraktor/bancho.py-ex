@@ -1613,7 +1613,7 @@ async def r(ctx: Context) -> str | None:
 
     pp = user_stats["pp"]
 
-    if db_mode == 0 or db_mode == 4:  # std или Relax(std)
+    if db_mode == 0 or db_mode == 4:  # std or Relax(std)
         target_star = min(2.0 + 1.0 * math.log(1 + pp / 1200), 4.2)
     elif db_mode == 5:  # Taiko Relax
         target_star = min(3.0 + 1.2 * math.log(1 + pp / 1200), 5.5)
