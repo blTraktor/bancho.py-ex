@@ -1487,10 +1487,10 @@ async def server(ctx: Context) -> str | None:
 async def r(ctx: Context) -> str | None:
     "Recommends a map based on your PP and preferences. !r help for more info."
     import random
-    import tempfile
-    import aiohttp
     import os
     import math
+    from pathlib import Path
+    import aiohttp
     from akatsuki_pp_py import Beatmap as AkaBeatmap, Calculator
 
     MODS_MAP = {
@@ -1503,7 +1503,7 @@ async def r(ctx: Context) -> str | None:
     }
 
     def mods_to_int(mods: list[str]) -> int:
-        # Убираем DT если есть NC
+        # remove DT if there is NC
         if "NC" in mods and "DT" in mods:
             mods.remove("DT")
         mods_int = sum(MODS_MAP.get(m, 0) for m in mods)
@@ -1636,83 +1636,45 @@ async def r(ctx: Context) -> str | None:
     if is_rx:
         mods_str = f"RX{mods_str}"
 
-    async with aiohttp.ClientSession() as session:
-        offset = 0
-        max_pages = 10
-        all_beatmaps = []
-        # Choosing genre: 75% Anime, 20% Video Game, 5% Pop, 1% без жанра
-        genre_roll = random.random()
-        if genre_roll < 0.75:  # 75% Anime
-            genre_id = 9
-        elif genre_roll < 0.95:  # 20% Video Game
-            genre_id = 10
-        elif genre_roll < 0.99:  # 4% Pop
-            genre_id = 2
-        else:  # 1% without genre
-            genre_id = None
-        while offset < max_pages * 50:  #50 maps per page, 10 pages maximum
-            params = {
-                "min_sr": min_star,
-                "max_sr": max_star,
-                "mode": game_mode,
-                "sort": "ranked_date:desc",
-                "status": 1,
-                "amount": 50,
-                "offset": offset,
-            }
-            if genre_id is not None:
-                params["g"] = genre_id
-            async with session.get(
-                "https://osu.direct/api/search",
-                params=params
-            ) as resp:
-                if resp.status != 200:
-                    return "Error when accessing osu.direct"
-                data = await resp.json()
-            if not data:
-                break
-            all_beatmaps.extend(data)
-            offset += 50
+    maps = await app.state.services.database.fetch_all(
+        "SELECT id, set_id, artist, title, version, diff, mode FROM maps WHERE mode = :mode AND status = 2 AND diff BETWEEN :min_star AND :max_star",
+        {"mode": game_mode, "min_star": min_star, "max_star": max_star}
+    )
 
-    if not all_beatmaps:
+    if not maps:
         return f"No maps found in the range {min_star:.1f}★–{max_star:.1f}★."
 
-    random.shuffle(all_beatmaps)
-
-    all_suitable_beatmaps = []
-    for beatmap in all_beatmaps:
-        if not beatmap.get("ChildrenBeatmaps"):
-            continue
-        suitable_beatmaps = [
-            (beatmap, b) for b in beatmap["ChildrenBeatmaps"]
-            if min_star <= b["DifficultyRating"] <= max_star
-        ]
-        all_suitable_beatmaps.extend(suitable_beatmaps)
-
-    if not all_suitable_beatmaps:
-        #If no suitable maps are found, select the nearest one.
-        beatmap = random.choice(all_beatmaps)
-        child_beatmap = min(
-            beatmap["ChildrenBeatmaps"],
-            key=lambda b: abs(b["DifficultyRating"] - target_star)
-        )
-    else:
-        beatmap, child_beatmap = random.choice(all_suitable_beatmaps)
-
-    osu_url = f"https://osu.direct/api/osu/{child_beatmap['BeatmapID']}"
+    random.shuffle(maps)
+    selected_map = None
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(osu_url) as resp:
-            if resp.status != 200:
-                return "Failed to download the .osu file."
-            osu_data = await resp.text()
+        while maps:
+            selected_map = maps.pop()
+            osu_path = BEATMAPS_PATH / f"{selected_map['id']}.osu"
+
+            if not osu_path.exists():
+                try:
+                    async with session.get(f"https://osu.direct/api/osu/{selected_map['id']}") as resp:
+                        if resp.status == 200:
+                            osu_data = await resp.text()
+                            osu_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(osu_path, "w", encoding="utf-8") as f:
+                                f.write(osu_data)
+                        else:
+                            continue
+                except Exception:
+                    continue
+
+            if osu_path.exists():
+                break
+
+        if not selected_map or not osu_path.exists():
+            return "Failed to find or download any suitable map."
+
+    osu_url = f"https://osu.{app.settings.DOMAIN}/b/{selected_map['id']}"
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8', suffix=".osu") as temp_osu_file:
-            temp_osu_file.write(osu_data)
-            osu_path = temp_osu_file.name
-
-        akatsuki_map = AkaBeatmap(path=osu_path)
+        akatsuki_map = AkaBeatmap(path=str(osu_path))
         calc = Calculator()
         calc.set_mods(mods_int)
 
@@ -1732,8 +1694,9 @@ async def r(ctx: Context) -> str | None:
         pp_section = " " + " | ".join(pp_results)
         star_section = f" ({star_rating:.2f}★)"
 
-    finally:
-        os.remove(osu_path)
+    except Exception as e:
+        return f"Error processing map: {str(e)}"
+
     mode_str = ""
     if game_mode == 0:
         mode_str += "std"
@@ -1745,11 +1708,11 @@ async def r(ctx: Context) -> str | None:
         mode_str += "Mania"
 
     return (
-        f"[https://osu.{app.settings.DOMAIN}/b/{child_beatmap['BeatmapID']} {beatmap['Artist']} - {beatmap['Title']} [{child_beatmap['DiffName']}]] "
+        f"[{osu_url} {selected_map['artist']} - {selected_map['title']} [{selected_map['version']}]] "
         f"{star_section} "
         f"{mode_str} {mods_str} "
         f"{pp_section}\n"
-        f"Alternate link: [https://catboy.best/d/{child_beatmap['ParentSetID']} Catboy.best]"
+        f"Alternate link: [https://catboy.best/d/{selected_map['set_id']} Catboy.best]"
     )
 
 
