@@ -1613,16 +1613,18 @@ async def r(ctx: Context) -> str | None:
 
     pp = user_stats["pp"]
 
-    if db_mode == 0 or db_mode == 4:  # std or Relax(std)
-        target_star = min(2.0 + 1.0 * math.log(1 + pp / 1200), 4.2)
+    if db_mode == 0:  # std
+        target_star = 2.0 + 1.5 * math.log(1 + pp / 1200)
+    elif db_mode == 4:  # std Relax
+        target_star = 2.5 + 1.8 * math.log(1 + pp / 1200)
     elif db_mode == 5:  # Taiko Relax
-        target_star = min(3.0 + 1.2 * math.log(1 + pp / 1200), 5.5)
+        target_star = 3.0 + 1.8 * math.log(1 + pp / 1200)
     elif db_mode == 6:  # Catch Relax
-        target_star = min(2.5 + 1.0 * math.log(1 + pp / 1200), 5.0)
+        target_star = 2.5 + 1.5 * math.log(1 + pp / 1200)
     elif db_mode == 3:  # Mania
-        target_star = min(2.0 + 0.8 * math.log(1 + pp / 1200), 4.5)
+        target_star = 2.0 + 1.2 * math.log(1 + pp / 1200)
     else:  # default std
-        target_star = min(2.0 + 1.0 * math.log(1 + pp / 1200), 4.2)
+        target_star = 2.0 + 1.5 * math.log(1 + pp / 1200)
 
     if pp < 1000:
         target_star = min(target_star, 1.8)
@@ -1714,7 +1716,6 @@ async def r(ctx: Context) -> str | None:
         f"{pp_section}\n"
         f"Alternate link: [https://catboy.best/d/{selected_map['set_id']} Catboy.best]"
     )
-
 
 if app.settings.DEVELOPER_MODE:
     """Advanced (& potentially dangerous) commands"""
