@@ -68,8 +68,6 @@ from app.repositories import tourney_pools as tourney_pools_repo
 from app.repositories import users as users_repo
 from app.usecases.performance import ScoreParams
 
-from app.discord.utils.notify import notify_change_map_status, notify_new_map_request
-
 if TYPE_CHECKING:
     from app.objects.channel import Channel
 
@@ -602,16 +600,6 @@ async def request(ctx: Context) -> str | None:
         return "You already have an active nomination request for that map."
 
     await map_requests_repo.create(map_id=bmap.id, player_id=ctx.player.id, active=True)
-    print(bmap.status.name)
-
-    await notify_new_map_request(
-        requester=ctx.player.name,
-        requester_id=ctx.player.id,
-        map_name=bmap.full_name,
-        status=bmap.status.name,
-        map_id=bmap.id,
-        map_set_id=bmap.set_id
-    )
 
     return "Request submitted."
 
@@ -766,27 +754,6 @@ async def _map(ctx: Context) -> str | None:
     data = json.dumps({"map_ids": modified_beatmap_ids, "ranktype": ranktype, "type": ctx.args[0]})
     await pubsub.execute_command("PUBLISH", "ex:map_status_change", data)
 
-    if requester:
-
-        map_id = bmap.id
-
-        await notify_change_map_status(
-            name=bmap,
-            status=ctx.args[0],
-            requester=requester['player_name'],
-            map_id=map_id,
-            map_set_id=bmap.set_id,
-            accepted_by=ctx.player.name
-        )
-    else:
-        map_id = bmap.id
-
-        await notify_change_map_status(
-            name=bmap,
-            status=ctx.args[0],
-            map_id=map_id,
-            map_set_id=bmap.set_id,
-            accepted_by=ctx.player.name)
 
     return f"{bmap.embed} updated to {new_status!s}."
 
