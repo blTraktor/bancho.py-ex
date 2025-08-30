@@ -2299,6 +2299,7 @@ if app.settings.REDIRECT_OSU_URLS:
     router.get("/beatmapsets/{file_path:path}")(osu_redirect_beatmaps)
     router.get("/community/forums/topics/{file_path:path}")(osu_redirect_beatmaps)
     router.get("/u/{file_path:path}")(profile_redirect)
+    router.get("/users/{file_path:path}")(profile_redirect)
     router.get("/home/account/edit")(avatar_edit_redirect)
 
 """ Misc handlers """
