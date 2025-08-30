@@ -1,4 +1,4 @@
-# abancho.py-ex
+# bancho.py-ex
 ![Discord](https://img.shields.io/discord/1295422749807743037?label=Discord&link=https%3A%2F%2Fdiscord.gg%2F6DH8bB24p6&color=1783a3&link=https%3A%2F%2Fgithub.com%2Fosu-NoLimits%2FShiina-Web)
 ![GitHub contributors](https://img.shields.io/github/contributors/osu-NoLimits/bancho.py-ex?label=Contributors&color=1783a3&link=https%3A%2F%2Fgithub.com%2Fosu-NoLimits%2Fbancho.py-ex)
 ![GitHub License](https://img.shields.io/github/license/osu-NoLimits/Shiina-Web?label=License&color=1783a3&link=https%3A%2F%2Fgithub.com%2Fosu-NoLimits%2Fbancho.py-ex)
