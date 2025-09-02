@@ -602,6 +602,18 @@ async def request(ctx: Context) -> str | None:
 
     await map_requests_repo.create(map_id=bmap.id, player_id=ctx.player.id, active=True)
 
+    data = json.dumps({
+        "map_id": bmap.id,
+        "map_name": bmap.full_name,
+        "map_status": bmap.status.value,
+        "requested_by": {
+            "id": ctx.player.id,
+            "name": ctx.player.name
+        }
+    })
+    pubsub = app.state.services.redis.pubsub()
+    await pubsub.execute_command("PUBLISH", "map_requests", data)
+
     return "Request submitted."
 
 
@@ -752,7 +764,16 @@ async def _map(ctx: Context) -> str | None:
         # deactivate rank requests for all ids
         await map_requests_repo.mark_batch_as_inactive(map_ids=modified_beatmap_ids)
     pubsub = app.state.services.redis.pubsub()
-    data = json.dumps({"map_ids": modified_beatmap_ids, "ranktype": ranktype, "type": ctx.args[0]})
+    data = json.dumps({
+        "map_ids": modified_beatmap_ids,
+        "ranktype": ranktype,
+        "type": ctx.args[0],
+        "requested_by": {
+            "id": requester["player_id"] if requester else None,
+            "name": requester["player_name"] if requester else None
+        },
+        "nominator": ctx.player.name
+    })
     await pubsub.execute_command("PUBLISH", "ex:map_status_change", data)
 
 
