@@ -9,6 +9,7 @@ import signal
 import time
 import traceback
 import uuid
+import orjson
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -1286,7 +1287,7 @@ async def rmpriv(ctx: Context) -> str:
 
     if bits & Privileges.DONATOR:
         user.donor_end = 0
-        await state.services.database.execute(
+        await app.state.services.database.execute(
             "UPDATE users SET donor_end = 0 WHERE id = :user_id",
             {"user_id": user.id}
         )
