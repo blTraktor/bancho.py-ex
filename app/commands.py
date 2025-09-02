@@ -772,7 +772,10 @@ async def _map(ctx: Context) -> str | None:
             "id": requester["player_id"] if requester else None,
             "name": requester["player_name"] if requester else None
         },
-        "nominator": ctx.player.name
+        "nominator": {
+            "id": ctx.player.id,
+            "name": ctx.player.name
+        }
     })
     await pubsub.execute_command("PUBLISH", "ex:map_status_change", data)
 
