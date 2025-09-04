@@ -1062,6 +1062,15 @@ async def settings(ctx: Context) -> str | None:
     if isinstance(user_settings, str):
         user_settings = orjson.loads(user_settings)
 
+    defaults = {
+        "leaderboard": {
+            "legacy-rxap-score": False,
+        },
+        "notifications": {
+            "achievements": True,
+        },
+    }
+
     categories = {
         "leaderboard": {
             "description": "Leaderboard settings",
@@ -1077,6 +1086,11 @@ async def settings(ctx: Context) -> str | None:
         },
     }
 
+    merged_settings = defaults.copy()
+    for cat, opts in user_settings.items():
+        merged_settings.setdefault(cat, {})
+        merged_settings[cat].update(opts)
+
     if not ctx.args:
         return "Available categories:\n" + "\n".join(
             f"{cat} - {data['description']}" for cat, data in categories.items()
@@ -1088,11 +1102,9 @@ async def settings(ctx: Context) -> str | None:
             return f"Unknown category: {category}"
 
         options = categories[category]["options"]
-        lines = [
-            f"Settings for {category}:"
-        ]
+        lines = [f"Settings for {category}:"]
         for opt, desc in options.items():
-            value = user_settings.get(category, {}).get(opt, False)
+            value = merged_settings.get(category, {}).get(opt, False)
             lines.append(f"  {opt}: {'on' if value else 'off'} - {desc}")
         return "\n".join(lines)
 
