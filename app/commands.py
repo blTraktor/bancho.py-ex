@@ -1050,6 +1050,83 @@ async def user(ctx: Context) -> str | None:
         ),
     )
 
+@command(Privileges.UNRESTRICTED)
+async def settings(ctx: Context) -> str | None:
+    """Your in-game settings."""
+    row = await app.state.services.database.fetch_one(
+        "SELECT ingame_settings FROM users WHERE id = :user_id",
+        {"user_id": ctx.player.id},
+    )
+
+    user_settings = row["ingame_settings"] or {}
+    if isinstance(user_settings, str):
+        user_settings = orjson.loads(user_settings)
+
+    categories = {
+        "leaderboard": {
+            "description": "Leaderboard settings",
+            "options": {
+                "legacy-rxap-score": "Show legacy score leaderboard in Relax/Autopilot instead of pp leaderboard.",
+            },
+        },
+        "notifications": {
+            "description": "Notification settings",
+            "options": {
+                "achievements": "Send achievement notifications"
+            },
+        },
+    }
+
+    if not ctx.args:
+        return "Available categories:\n" + "\n".join(
+            f"{cat} - {data['description']}" for cat, data in categories.items()
+        )
+
+    if len(ctx.args) == 1:
+        category = ctx.args[0].lower()
+        if category not in categories:
+            return f"Unknown category: {category}"
+
+        options = categories[category]["options"]
+        lines = [
+            f"Settings for {category}:"
+        ]
+        for opt, desc in options.items():
+            value = user_settings.get(category, {}).get(opt, False)
+            lines.append(f"  {opt}: {'on' if value else 'off'} - {desc}")
+        return "\n".join(lines)
+
+    if len(ctx.args) != 3:
+        return "Usage: !settings <category> <setting> <on/off>"
+
+    category, setting, value = ctx.args
+    category, setting, value = category.lower(), setting, value.lower()
+
+    if category not in categories:
+        return f"Unknown category: {category}"
+
+    if setting not in categories[category]["options"]:
+        return f"Unknown setting in {category}: {setting}"
+
+    if value not in ("on", "off"):
+        return "Value must be 'on' or 'off'."
+
+    user_settings.setdefault(category, {})
+    user_settings[category][setting] = (value == "on")
+
+    await app.state.services.database.execute(
+        "UPDATE users SET ingame_settings = :settings WHERE id = :user_id",
+        {
+            "settings": orjson.dumps(user_settings).decode("utf-8"),
+            "user_id": ctx.player.id,
+        },
+    )
+
+    return (
+        f"Updated {category}:{setting} -> {value}\n"
+        f"({categories[category]['options'][setting]})"
+    )
+
 if app.settings.DISALLOW_INGAME_RESTRICTION == False:
     @command(Privileges.ADMINISTRATOR, hidden=True)
     async def restrict(ctx: Context) -> str | None:

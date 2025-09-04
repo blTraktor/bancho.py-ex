@@ -769,11 +769,22 @@ if(not app.settings.DISALLOW_OLD_CLIENTS):
                     else:
                         performance = f"{score.pp:,.2f}pp"
 
-                    score.player.enqueue(
-                        app.packets.notification(
-                            f"You achieved #{score.rank}! ({performance})",
-                        ),
+                    row = await app.state.services.database.fetch_one(
+                        "SELECT ingame_settings FROM users WHERE id = :user_id",
+                        {"user_id": score.player.id},
                     )
+                    user_settings = row["ingame_settings"] or score.player.ingame_settings or {}
+                    if isinstance(user_settings, str):
+                        user_settings = orjson.loads(user_settings)
+
+                    send_achievements = user_settings.get("notifications", {}).get("achievements", True)
+
+                    if send_achievements:
+                        score.player.enqueue(
+                            app.packets.notification(
+                                f"You achieved #{score.rank}! ({performance})",
+                            ),
+                        )
 
                     if score.rank == 1 and not score.player.restricted and score.status == 2:
                         announce_chan = app.state.sessions.channels.get_by_name("#announce")
@@ -1377,11 +1388,22 @@ async def osuSubmitModularSelector(
                 else:
                     performance = f"{score.pp:,.2f}pp"
 
-                score.player.enqueue(
-                    app.packets.notification(
-                        f"You achieved #{score.rank}! ({performance})",
-                    ),
+                row = await app.state.services.database.fetch_one(
+                    "SELECT ingame_settings FROM users WHERE id = :user_id",
+                    {"user_id": score.player.id},
                 )
+                user_settings = row["ingame_settings"] or score.player.ingame_settings or {}
+                if isinstance(user_settings, str):
+                    user_settings = orjson.loads(user_settings)
+
+                send_achievements = user_settings.get("notifications", {}).get("achievements", True)
+
+                if send_achievements:
+                    score.player.enqueue(
+                        app.packets.notification(
+                            f"You achieved #{score.rank}! ({performance})",
+                        ),
+                    )
 
                 if score.rank == 1 and not score.player.restricted and score.status == 2:
                     announce_chan = app.state.sessions.channels.get_by_name("#announce")
@@ -1951,6 +1973,26 @@ async def getScores(
     mods = Mods(mods_arg)
     mode = GameMode(mode_arg)
 
+    row = await app.state.services.database.fetch_one(
+        "SELECT ingame_settings FROM users WHERE id = :user_id",
+        {"user_id": player.id},
+    )
+    user_settings = row["ingame_settings"] or {}
+    if isinstance(user_settings, str):
+        import orjson
+        user_settings = orjson.loads(user_settings)
+
+    legacy_rxap_score = (
+        user_settings.get("leaderboard", {})
+        .get("legacy-rxap-score", False)
+    )
+
+    if mods & (Mods.RELAX | Mods.AUTOPILOT):
+        scoring_metric: Literal["pp", "score"] = "score" if legacy_rxap_score else "pp"
+    else:
+        scoring_metric: Literal["pp", "score"] = "score"
+
+
     # attempt to update their stats if their
     # gm/gm-affecting-mods change at all.
     if mode != player.status.mode:
@@ -1960,9 +2002,6 @@ async def getScores(
         if not player.restricted:
             app.state.sessions.players.enqueue(app.packets.user_stats(player))
 
-    scoring_metric: Literal["pp", "score"] = (
-        "score"
-    )
 
     bmap = await Beatmap.from_md5(map_md5, set_id=map_set_id)
     has_set_id = map_set_id > 0
