@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import time
 import math
 import os
 import sys
@@ -14,6 +15,7 @@ from dataclasses import field
 from pathlib import Path
 from typing import Any
 from typing import TypeVar
+from collections import deque
 
 import databases
 from akatsuki_pp_py import Beatmap
@@ -48,6 +50,33 @@ class Context:
     database: databases.Database
     redis: aioredis.Redis
     beatmaps: dict[int, Beatmap] = field(default_factory=dict)
+    rate_limiter: "RateLimiter | None" = None
+    fetch_sem: asyncio.Semaphore | None = None
+
+
+class RateLimiter:
+    """Simple sliding-window rate limiter.
+
+    Allows up to `limit` events per `window` seconds.
+    """
+
+    def __init__(self, limit: int, window: float) -> None:
+        self.limit = limit
+        self.window = window
+        self._times: deque[float] = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                while self._times and now - self._times[0] > self.window:
+                    self._times.popleft()
+                if len(self._times) < self.limit:
+                    self._times.append(now)
+                    return
+                sleep_for = self.window - (now - self._times[0])
+            await asyncio.sleep(max(sleep_for, 0.01))
 
 
 def divide_chunks(values: list[T], n: int) -> Iterator[list[T]]:
@@ -217,6 +246,112 @@ async def recalculate_mode_scores(mode: GameMode, ctx: Context) -> None:
         await process_score_chunk(score_chunk, ctx)
 
 
+async def _calc_map_pp100(map_row: dict[str, Any], ctx: Context) -> None:
+    map_id = map_row["id"]
+    try:
+        assert ctx.fetch_sem is not None
+        assert ctx.rate_limiter is not None
+
+        
+        async with ctx.fetch_sem:
+            await ctx.rate_limiter.acquire()
+            ok = await ensure_osu_file_is_available(map_id, expected_md5=map_row["md5"])
+        if not ok:
+            async with ctx.fetch_sem:
+                await ctx.rate_limiter.acquire()
+                ok = await ensure_osu_file_is_available(map_id)
+        if not ok:
+            print(f"Skipped map {map_id} (osu file not available)")
+            return
+
+        beatmap = ctx.beatmaps.get(map_row["id"])
+        if beatmap is None:
+            beatmap = Beatmap(path=str(BEATMAPS_PATH / f"{map_row['id']}.osu"))
+            ctx.beatmaps[map_row["id"]] = beatmap
+
+        calc = Calculator(mode=GameMode(map_row["mode"]).as_vanilla, mods=0)
+        calc.set_acc(100.0)
+        perf = calc.performance(beatmap)
+        pp100 = perf.pp
+        if math.isnan(pp100) or math.isinf(pp100):
+            pp100 = 0.0
+
+        await ctx.database.execute(
+            "UPDATE maps SET pp100 = :pp100 WHERE id = :id",
+            {"pp100": pp100, "id": map_row["id"]},
+        )
+
+        if debug_mode_enabled:
+            print(f"Map {map_row['id']} pp100 = {pp100:.3f}")
+    except Exception as e:
+        print(f"Failed pp100 for map {map_row['id']}: {e}")
+
+
+async def recalculate_all_maps_pp(ctx: Context) -> None:
+    query = """
+        SELECT id, md5, mode 
+        FROM maps 
+        WHERE pp100 IS NULL
+    """
+    
+    rows = [dict(row) for row in await ctx.database.fetch_all(query)]
+    total_maps = len(rows)
+    
+    if not total_maps:
+        print("All maps already have pp100 calculated!")
+        return
+
+    print(f"Found {total_maps} maps without pp100 calculation")
+    
+    if ctx.rate_limiter is None:
+        ctx.rate_limiter = RateLimiter(limit=20, window=60.0)
+    if ctx.fetch_sem is None:
+        ctx.fetch_sem = asyncio.Semaphore(10)
+
+    chunk_size = 1
+    processed = 0
+
+    print("\n" + "="*50)
+    print(f"Processing {total_maps} maps...")
+    print("="*50 + "\n")
+
+    bar_length = 40
+    start_time = time.time()
+    
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+
+        results = await asyncio.gather(
+            *(_calc_map_pp100(r, ctx) for r in chunk),
+            return_exceptions=True
+        )
+        
+        processed += len(chunk)
+        progress = min(processed, total_maps)
+        percent = (progress / total_maps) * 100
+
+        elapsed = time.time() - start_time
+        if progress > 0:
+            remaining = (elapsed / progress) * (total_maps - progress)
+            eta = f"ETA: {int(remaining // 60)}m {int(remaining % 60)}s"
+        else:
+            eta = "Calculating..."
+
+        filled_length = int(bar_length * progress // total_maps)
+        bar = '█' * filled_length + ' ' * (bar_length - filled_length)
+
+        current_map = chunk[0]['id'] if chunk and len(chunk) > 0 else '?'
+        status_line = f"Processing map {current_map}... [{bar}] {percent:.1f}% ({progress}/{total_maps}) | {eta}"
+        print('\033[K', end='\r')
+        print(status_line, end='\r', flush=True)
+    
+
+    total_time = time.time() - start_time
+    print(f"\n\nCompleted processing {total_maps} maps in {total_time//60:.0f}m {total_time%60:.1f}s")
+    print(f"Average speed: {total_maps/total_time:.2f} maps/second")
+    print("Done!")
+
+
 async def main(argv: Sequence[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
 
@@ -250,6 +385,11 @@ async def main(argv: Sequence[str] | None = None) -> int:
         # would love to do things like "vn!std", but "!" will break interpretation
         choices=["0", "1", "2", "3", "4", "5", "6", "8"],
     )
+    parser.add_argument(
+        "--maps-pp",
+        help="Calculate and store 100% NM pp for all maps into maps.pp100",
+        action="store_true",
+    )
     args = parser.parse_args(argv)
 
     global debug_mode_enabled
@@ -261,6 +401,9 @@ async def main(argv: Sequence[str] | None = None) -> int:
     redis = await aioredis.from_url(app.settings.REDIS_DSN)  # type: ignore[no-untyped-call]
 
     ctx = Context(db, redis)
+
+    if args.maps_pp:
+        await recalculate_all_maps_pp(ctx)
 
     for mode in args.mode:
         mode = GameMode(int(mode))
