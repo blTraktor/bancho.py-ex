@@ -143,6 +143,7 @@ create table maps
 	od float(4,2) default 0.00 not null,
 	hp float(4,2) default 0.00 not null,
 	diff float(6,3) default 0.000 not null,
+	pp100 float(10,3) default null,
 	primary key (server, id),
 	constraint maps_id_uindex
 		unique (id),
