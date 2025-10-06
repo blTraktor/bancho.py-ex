@@ -81,6 +81,8 @@ from app.usecases import user_achievements as user_achievements_usecases
 from app.utils import escape_enum
 from app.utils import pymysql_encode
 
+from akatsuki_pp_py import Beatmap as AkaBeatmap, Calculator
+
 
 BEATMAPS_PATH = SystemPath.cwd() / ".data/osu"
 REPLAYS_PATH = SystemPath.cwd() / ".data/osr"
@@ -1926,6 +1928,37 @@ async def get_leaderboard_scores(
 
     return score_rows, personal_best_score_row
 
+async def ensure_pp100_calculated(map_id: int) -> None:
+    """Calculate and store pp100 for a map if missing."""
+    db = app.state.services.database
+
+    record = await db.fetch_one(
+        "SELECT pp100 FROM maps WHERE id = :id",
+        {"id": map_id}
+    )
+    if not record or not record["pp100"]:
+        async def calc_task():
+            try:
+                osu_path = BEATMAPS_PATH / f"{map_id}.osu"
+                await ensure_osu_file_is_available(map_id)
+
+                beatmap = AkaBeatmap(path=str(osu_path))
+                calc = Calculator()
+                result = calc.performance(beatmap)
+                pp100 = result.pp
+
+                await db.execute(
+                    "UPDATE maps SET pp100 = :pp WHERE id = :id",
+                    {"pp": pp100, "id": map_id}
+                )
+                if app.settings.DEBUG:
+                    log(f"[maps] Calculated pp100 for map {map_id}: {pp100:.2f}")
+            except Exception as e:
+                if app.settings.DEBUG:
+                    log(f"[maps] Failed to calculate pp100 for map {map_id}: {e}")
+
+        asyncio.create_task(calc_task())
+
 
 SCORE_LISTING_FMTSTR = (
     "{id}|{name}|{score}|{max_combo}|"
@@ -2049,6 +2082,8 @@ async def getScores(
             return Response(b"-1|false")
 
     # we've found a beatmap for the request.
+
+    asyncio.create_task(ensure_pp100_calculated(bmap.id))
 
     if app.state.services.datadog:
         app.state.services.datadog.increment("bancho.leaderboards_served")  # type: ignore[no-untyped-call]
