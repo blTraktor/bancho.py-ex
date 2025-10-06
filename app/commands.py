@@ -69,6 +69,8 @@ from app.repositories import tourney_pools as tourney_pools_repo
 from app.repositories import users as users_repo
 from app.usecases.performance import ScoreParams
 
+from akatsuki_pp_py import Beatmap as AkaBeatmap, Calculator
+
 if TYPE_CHECKING:
     from app.objects.channel import Channel
 
@@ -1566,10 +1568,7 @@ async def server(ctx: Context) -> str | None:
 
 @command(Privileges.UNRESTRICTED)
 async def r(ctx: Context) -> str | None:
-    "Recommends a map based on your PP and mods."
-    import random
-    from akatsuki_pp_py import Beatmap as AkaBeatmap, Calculator
-
+    """Recommends a map based on your average PP and selected mods."""
     MODS_MAP = {
         "HD": 1 << 3,
         "HR": 1 << 4,
@@ -1578,6 +1577,16 @@ async def r(ctx: Context) -> str | None:
         "NC": (1 << 6) | (1 << 9),
         "FL": 1 << 10,
         "EZ": 1 << 1,
+    }
+
+    MOD_PP_MULTIPLIERS = {
+        "NM": 1.10,
+        "HD": 1.08,
+        "HR": 1.18,
+        "DT": 0.90,
+        "NC": 0.88,
+        "FL": 1.05,
+        "EZ": 1.40,
     }
 
     def mods_to_int(mods: list[str]) -> int:
@@ -1603,8 +1612,8 @@ async def r(ctx: Context) -> str | None:
     if ctx.args and ctx.args[0].lower() == "help":
         return (
             "Usage: !r [mode] [mods]\n"
-            "Available modes: std (default), taiko, ctb, mania\n"
-            "Available mods: HD, HR, DT, RX, NC, FL, EZ\n"
+            "Modes: std (default), taiko, ctb, mania\n"
+            "Mods: HD, HR, DT, NC, RX, FL, EZ\n"
             "Examples:\n"
             "!r - std NoMod\n"
             "!r taiko RX DT\n"
@@ -1639,7 +1648,7 @@ async def r(ctx: Context) -> str | None:
     if "DT" in user_mods and "HT" in user_mods:
         return "DT and HT cannot be used together."
 
-    final_mods = user_mods.copy() if user_mods else []
+    final_mods = user_mods.copy()
     if is_rx:
         final_mods.append("RX")
     mods_int = mods_to_int(final_mods)
@@ -1649,43 +1658,40 @@ async def r(ctx: Context) -> str | None:
         db_mode += 4
 
     scores = await app.state.services.database.fetch_all(
-        "SELECT pp FROM scores WHERE userid = :user_id AND mode = :mode AND status = 2",
-        {"user_id": ctx.player.id, "mode": db_mode}
+        "SELECT pp FROM scores WHERE userid = :user_id AND mode = :mode AND status = 2 AND pp > 0",
+        {"user_id": ctx.player.id, "mode": db_mode},
     )
-
     if not scores:
         return "No completed scores found for your mode."
 
     avg_pp = sum(s["pp"] for s in scores) / len(scores)
 
     def adjust_pp_for_mods(pp: float, mods: list[str]) -> float:
-        if "DT" in mods or "NC" in mods:
-            pp *= 1.10
-        if "HR" in mods:
-            pp *= 1.05
-        if "EZ" in mods:
-            pp *= 0.90
-        return pp
+        multiplier = 1.0
+        for mod in mods:
+            multiplier *= MOD_PP_MULTIPLIERS.get(mod, 1.0)
+        if not mods:
+            multiplier *= MOD_PP_MULTIPLIERS["NM"]
+        return pp * multiplier
 
     target_pp = adjust_pp_for_mods(avg_pp, final_mods)
-    pp_tolerance = min(max(10, target_pp * 0.1), 10)
+
+    pp_tolerance = max(15, target_pp * 0.12)
     min_pp = max(target_pp - pp_tolerance, 0)
     max_pp = target_pp + pp_tolerance
 
     maps = await app.state.services.database.fetch_all(
         "SELECT id, set_id, artist, title, version, mode, pp100 FROM maps "
         "WHERE mode = :mode AND status = 2 AND pp100 BETWEEN :min_pp AND :max_pp",
-        {"mode": game_mode, "min_pp": min_pp, "max_pp": max_pp}
+        {"mode": game_mode, "min_pp": min_pp, "max_pp": max_pp},
     )
-
     if not maps:
         return f"No maps found in PP range ({min_pp:.0f}-{max_pp:.0f})."
 
-    random.shuffle(maps)
-    selected_map = maps[0]
-
+    selected_map = random.choice(maps)
     osu_path = BEATMAPS_PATH / f"{selected_map['id']}.osu"
     await ensure_osu_file_is_available(selected_map["id"])
+
     osu_url = f"https://osu.{app.settings.DOMAIN}/b/{selected_map['id']}"
 
     try:
@@ -1697,27 +1703,23 @@ async def r(ctx: Context) -> str | None:
 
         pp_results = []
         for acc in [90.0, 95.0, 98.0, 100.0]:
-            try:
-                calc.set_acc(acc)
-                calc.set_difficulty(max_perf.difficulty)
-                result = calc.performance(akatsuki_map)
-                pp_results.append(f"{acc:.0f}%: {result.pp:.2f}pp")
-            except Exception as e:
-                pp_results.append(f"{acc:.0f}%: error ({str(e)})")
+            calc.set_acc(acc)
+            calc.set_difficulty(max_perf.difficulty)
+            result = calc.performance(akatsuki_map)
+            pp_results.append(f"{acc:.0f}%: {result.pp:.1f}pp")
 
-        pp_section = " " + " | ".join(pp_results)
+        pp_section = " | ".join(pp_results)
         star_section = f" ({star_rating:.2f}★)"
 
     except Exception as e:
-        return f"Error processing map: {str(e)}"
+        return f"Error processing map: {e}"
 
     mode_str = ["std", "Taiko", "Catch", "Mania"][game_mode]
+    mods_str = "NoMod" if not final_mods else "".join(final_mods)
 
     return (
-        f"[{osu_url} {selected_map['artist']} - {selected_map['title']} [{selected_map['version']}]] "
-        f"{star_section} {mode_str} "
-        f"{'NoMod' if not final_mods else ''.join(final_mods)} "
-        f"{pp_section}\n"
+        f"[{osu_url} {selected_map['artist']} - {selected_map['title']} [{selected_map['version']}]]"
+        f" {star_section} {mode_str} {mods_str} | {pp_section}\n"
         f"Alternate link: [https://catboy.best/d/{selected_map['set_id']} Catboy.best]"
     )
 
