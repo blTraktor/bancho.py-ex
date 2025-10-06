@@ -1566,29 +1566,24 @@ async def server(ctx: Context) -> str | None:
 
 @command(Privileges.UNRESTRICTED)
 async def r(ctx: Context) -> str | None:
-    "Recommends a map based on your PP and preferences. !r help for more info."
+    "Recommends a map based on your PP and mods."
     import random
-    import os
-    import math
-    from pathlib import Path
-    import aiohttp
     from akatsuki_pp_py import Beatmap as AkaBeatmap, Calculator
 
     MODS_MAP = {
-        "HD": 1 << 3,  # 8
-        "HR": 1 << 4,  # 16
-        "DT": 1 << 6,  # 64
-        "RX": 1 << 7,  # 128 (Relax)
-        "NC": (1 << 6) | (1 << 9),  # 64 | 512 = 576
-        "FL": 1 << 10,  # 1024
+        "HD": 1 << 3,
+        "HR": 1 << 4,
+        "DT": 1 << 6,
+        "RX": 1 << 7,
+        "NC": (1 << 6) | (1 << 9),
+        "FL": 1 << 10,
+        "EZ": 1 << 1,
     }
 
     def mods_to_int(mods: list[str]) -> int:
-        # remove DT if there is NC
         if "NC" in mods and "DT" in mods:
             mods.remove("DT")
-        mods_int = sum(MODS_MAP.get(m, 0) for m in mods)
-        return mods_int
+        return sum(MODS_MAP.get(m, 0) for m in mods)
 
     def parse_mods(mods_input: str) -> list[str]:
         mods_input = mods_input.upper().replace(" ", "")
@@ -1608,19 +1603,12 @@ async def r(ctx: Context) -> str | None:
     if ctx.args and ctx.args[0].lower() == "help":
         return (
             "Usage: !r [mode] [mods]\n"
-            "Recommends a map based on your PP and preferences.\n\n"
             "Available modes: std (default), taiko, ctb, mania\n"
-            "Available mods: HD, HR, DT, RX, NC, FL\n"
-            "Notes:\n"
-            "- If no mode is specified, std is used.\n"
-            "- If no mods are specified, NoMod is used.\n"
-            "- DT and HT cannot be used together.\n"
-            "- RX can be combined with any mode.\n\n"
+            "Available mods: HD, HR, DT, RX, NC, FL, EZ\n"
             "Examples:\n"
-            "!r - Recommends a std map with NoMod.\n"
-            "!r taiko - Recommends a Taiko map with NoMod.\n"
-            "!r ctb RX DT - Recommends a Catch map with RXDT.\n"
-            "!r mania HD - Recommends a Mania map with HD."
+            "!r - std NoMod\n"
+            "!r taiko RX DT\n"
+            "!r mania HD"
         )
 
     game_mode_arg = ""
@@ -1629,138 +1617,81 @@ async def r(ctx: Context) -> str | None:
         if len(ctx.args) > 1:
             game_mode_arg = ctx.args[0].lower()
             mods_input = " ".join(ctx.args[1:])
-        elif len(ctx.args) == 1:
+        else:
             game_mode_arg = ctx.args[0].lower()
 
     game_mode = 0
     is_rx = False
-    if not game_mode_arg:
-        game_mode = 0
-    elif game_mode_arg == "taiko":
+    if game_mode_arg == "taiko":
         game_mode = 1
     elif game_mode_arg == "ctb":
         game_mode = 2
     elif game_mode_arg == "mania":
         game_mode = 3
-    else:
+    elif game_mode_arg not in ["std", ""]:
         mods_input = game_mode_arg + " " + mods_input
 
     user_mods = parse_mods(mods_input)
-    has_user_mods = len(user_mods) > 0
     if "RX" in user_mods:
         is_rx = True
         user_mods.remove("RX")
 
-    if mods_input and not has_user_mods:
-        return "Incorrect mods. Available mods: " + ", ".join(MODS_MAP.keys()) + ". Available modes: std, taiko, ctb, mania."
-
     if "DT" in user_mods and "HT" in user_mods:
         return "DT and HT cannot be used together."
 
-    final_mods = []
-    if has_user_mods:
-        final_mods = user_mods.copy()
-        if "DT" in final_mods:
-            final_mods = ["DT"]
-            if random.random() < 0.25 and "HR" not in final_mods:
-                final_mods.append("HR")
-            if random.random() < 0.1 and "FL" not in final_mods:
-                final_mods.append("FL")
-        elif "HT" in final_mods:
-            final_mods = ["HT"]
-            if random.random() < 0.1 and "FL" not in final_mods:
-                final_mods.append("FL")
-    else:
-        final_mods = []
-
-    if is_rx and "RX" not in final_mods:
+    final_mods = user_mods.copy() if user_mods else []
+    if is_rx:
         final_mods.append("RX")
+    mods_int = mods_to_int(final_mods)
 
     db_mode = game_mode
     if is_rx:
-        if game_mode == 0:
-            db_mode = 4  # osu! Relax
-        elif game_mode == 1:
-            db_mode = 5  # Taiko Relax
-        elif game_mode == 2:
-            db_mode = 6  # Catch Relax
+        db_mode += 4
 
-    user_stats = await app.state.services.database.fetch_one(
-        "SELECT pp FROM stats WHERE id = :user_id AND mode = :mode",
-        {"user_id": ctx.player.id, "mode": db_mode},
+    scores = await app.state.services.database.fetch_all(
+        "SELECT pp FROM scores WHERE userid = :user_id AND mode = :mode AND status = 2",
+        {"user_id": ctx.player.id, "mode": db_mode}
     )
-    if not user_stats:
-        return "Couldn't find your stats"
 
-    pp = user_stats["pp"]
+    if not scores:
+        return "No completed scores found for your mode."
 
-    if db_mode == 0:  # std
-        target_star = 2.0 + 1.5 * math.log(1 + pp / 1200)
-    elif db_mode == 4:  # std Relax
-        target_star = 2.5 + 1.8 * math.log(1 + pp / 1200)
-    elif db_mode == 5:  # Taiko Relax
-        target_star = 3.0 + 1.8 * math.log(1 + pp / 1200)
-    elif db_mode == 6:  # Catch Relax
-        target_star = 2.5 + 1.5 * math.log(1 + pp / 1200)
-    elif db_mode == 3:  # Mania
-        target_star = 2.0 + 1.2 * math.log(1 + pp / 1200)
-    else:  # default std
-        target_star = 2.0 + 1.5 * math.log(1 + pp / 1200)
+    avg_pp = sum(s["pp"] for s in scores) / len(scores)
 
-    if pp < 1000:
-        target_star = min(target_star, 1.8)
+    def adjust_pp_for_mods(pp: float, mods: list[str]) -> float:
+        if "DT" in mods or "NC" in mods:
+            pp *= 1.10
+        if "HR" in mods:
+            pp *= 1.05
+        if "EZ" in mods:
+            pp *= 0.90
+        return pp
 
-    target_star = max(target_star, 1.0)
-    min_star = max(target_star - 0.5, 1.0)
-    max_star = target_star + 0.5
-
-    mods_int = mods_to_int(final_mods)
-    mods_str = "".join([mod for mod in final_mods if mod != "RX"]) or "NoMod"
-    if is_rx:
-        mods_str = f"RX{mods_str}"
+    target_pp = adjust_pp_for_mods(avg_pp, final_mods)
+    pp_tolerance = min(max(10, target_pp * 0.1), 10)
+    min_pp = max(target_pp - pp_tolerance, 0)
+    max_pp = target_pp + pp_tolerance
 
     maps = await app.state.services.database.fetch_all(
-        "SELECT id, set_id, artist, title, version, diff, mode FROM maps WHERE mode = :mode AND status = 2 AND diff BETWEEN :min_star AND :max_star",
-        {"mode": game_mode, "min_star": min_star, "max_star": max_star}
+        "SELECT id, set_id, artist, title, version, mode, pp100 FROM maps "
+        "WHERE mode = :mode AND status = 2 AND pp100 BETWEEN :min_pp AND :max_pp",
+        {"mode": game_mode, "min_pp": min_pp, "max_pp": max_pp}
     )
 
     if not maps:
-        return f"No maps found in the range {min_star:.1f}★–{max_star:.1f}★."
+        return f"No maps found in PP range ({min_pp:.0f}-{max_pp:.0f})."
 
     random.shuffle(maps)
-    selected_map = None
+    selected_map = maps[0]
 
-    async with aiohttp.ClientSession() as session:
-        while maps:
-            selected_map = maps.pop()
-            osu_path = BEATMAPS_PATH / f"{selected_map['id']}.osu"
-
-            if not osu_path.exists():
-                try:
-                    async with session.get(f"https://osu.direct/api/osu/{selected_map['id']}") as resp:
-                        if resp.status == 200:
-                            osu_data = await resp.text()
-                            osu_path.parent.mkdir(parents=True, exist_ok=True)
-                            with open(osu_path, "w", encoding="utf-8") as f:
-                                f.write(osu_data)
-                        else:
-                            continue
-                except Exception:
-                    continue
-
-            if osu_path.exists():
-                break
-
-        if not selected_map or not osu_path.exists():
-            return "Failed to find or download any suitable map."
-
+    osu_path = BEATMAPS_PATH / f"{selected_map['id']}.osu"
+    await ensure_osu_file_is_available(selected_map["id"])
     osu_url = f"https://osu.{app.settings.DOMAIN}/b/{selected_map['id']}"
 
     try:
         akatsuki_map = AkaBeatmap(path=str(osu_path))
         calc = Calculator()
         calc.set_mods(mods_int)
-
         max_perf = calc.performance(akatsuki_map)
         star_rating = max_perf.difficulty.stars
 
@@ -1780,23 +1711,16 @@ async def r(ctx: Context) -> str | None:
     except Exception as e:
         return f"Error processing map: {str(e)}"
 
-    mode_str = ""
-    if game_mode == 0:
-        mode_str += "std"
-    elif game_mode == 1:
-        mode_str += "Taiko"
-    elif game_mode == 2:
-        mode_str += "Catch"
-    elif game_mode == 3:
-        mode_str += "Mania"
+    mode_str = ["std", "Taiko", "Catch", "Mania"][game_mode]
 
     return (
         f"[{osu_url} {selected_map['artist']} - {selected_map['title']} [{selected_map['version']}]] "
-        f"{star_section} "
-        f"{mode_str} {mods_str} "
+        f"{star_section} {mode_str} "
+        f"{'NoMod' if not final_mods else ''.join(final_mods)} "
         f"{pp_section}\n"
         f"Alternate link: [https://catboy.best/d/{selected_map['set_id']} Catboy.best]"
     )
+
 
 if app.settings.DEVELOPER_MODE:
     """Advanced (& potentially dangerous) commands"""
