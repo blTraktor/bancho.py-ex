@@ -15,6 +15,7 @@ from typing import TypedDict
 import httpx
 from tenacity import retry
 from tenacity.stop import stop_after_attempt
+from tenacity.wait import wait_exponential
 
 import app.settings
 import app.state
@@ -66,12 +67,21 @@ async def api_get_beatmaps(**params: Any) -> BeatmapApiResponse:
     return {"data": None, "status_code": response.status_code}
 
 
-@retry(reraise=True, stop=stop_after_attempt(3))
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4.0))
 async def api_get_osu_file(beatmap_id: int) -> bytes:
-    url = f"https://old.ppy.sh/osu/{beatmap_id}"
-    response = await app.state.services.http_client.get(url)
-    response.raise_for_status()
-    return response.read()
+    """Fetch the .osu file, trying old.ppy.sh first, then osu.direct as fallback."""
+    try:
+        url_old = f"https://old.ppy.sh/osu/{beatmap_id}"
+        resp = await app.state.services.http_client.get(url_old)
+        resp.raise_for_status()
+        return resp.read()
+    except Exception:
+        pass
+
+    url_direct = f"https://osu.direct/api/osu/{beatmap_id}"
+    resp2 = await app.state.services.http_client.get(url_direct)
+    resp2.raise_for_status()
+    return resp2.read()
 
 
 def disk_has_expected_osu_file(
