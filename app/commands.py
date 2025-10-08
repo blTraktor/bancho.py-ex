@@ -1579,14 +1579,14 @@ async def r(ctx: Context) -> str | None:
         "EZ": 1 << 1,
     }
 
-    MOD_PP_MULTIPLIERS = {
-        "NM": 1.10,
-        "HD": 1.08,
-        "HR": 1.18,
-        "DT": 0.90,
-        "NC": 0.88,
-        "FL": 1.05,
-        "EZ": 1.40,
+    MOD_PP_DIVIDERS = {
+        "NM": 0.75,
+        "HD": 1.00,
+        "HR": 1.10,
+        "DT": 1.35,
+        "NC": 1.35,
+        "FL": 1.00,
+        "EZ": 0.70,
     }
 
     def mods_to_int(mods: list[str]) -> int:
@@ -1595,7 +1595,7 @@ async def r(ctx: Context) -> str | None:
         return sum(MODS_MAP.get(m, 0) for m in mods)
 
     def parse_mods(mods_input: str) -> list[str]:
-        mods_input = mods_input.upper().replace(" ", "")
+        mods_input = str(mods_input).upper().replace(" ", "")
         known_mods = list(MODS_MAP.keys())
         user_mods = []
         i = 0
@@ -1658,27 +1658,42 @@ async def r(ctx: Context) -> str | None:
         db_mode += 4
 
     scores = await app.state.services.database.fetch_all(
-        "SELECT pp FROM scores WHERE userid = :user_id AND mode = :mode AND status = 2 AND pp > 0",
+        "SELECT pp, mods FROM scores WHERE userid = :user_id AND mode = :mode AND status = 2 AND pp > 0",
         {"user_id": ctx.player.id, "mode": db_mode},
     )
     if not scores:
         return "No completed scores found for your mode."
 
-    avg_pp = sum(s["pp"] for s in scores) / len(scores)
-
-    def adjust_pp_for_mods(pp: float, mods: list[str]) -> float:
+    total_nomod_pp = 0
+    for s in scores:
+        pp = s["pp"]
+        score_mods_int = s.get("mods", 0)
         multiplier = 1.0
-        for mod in mods:
-            multiplier *= MOD_PP_MULTIPLIERS.get(mod, 1.0)
-        if not mods:
-            multiplier *= MOD_PP_MULTIPLIERS["NM"]
-        return pp * multiplier
+        for mod_name, mod_bit in MODS_MAP.items():
+            if score_mods_int & mod_bit:
+                if mod_name not in ["DT", "NC", "RX", "HR"]:
+                    multiplier *= MOD_PP_DIVIDERS.get(mod_name, 1.0)
+        total_nomod_pp += pp / multiplier
+    avg_pp_nomod = total_nomod_pp / len(scores)
 
-    target_pp = adjust_pp_for_mods(avg_pp, final_mods)
+    mod_multiplier = 1.0
+    if not user_mods:  # NM
+        mod_multiplier = MOD_PP_DIVIDERS.get("NM", 1.0)
+    else:
+        for m in user_mods:
+            if m not in ["DT", "NC", "RX", "HR"]:
+                mod_multiplier *= MOD_PP_DIVIDERS.get(m, 1.0)
 
-    pp_tolerance = max(15, target_pp * 0.12)
-    min_pp = max(target_pp - pp_tolerance, 0)
-    max_pp = target_pp + pp_tolerance
+    target_pp_nomod = avg_pp_nomod / mod_multiplier
+
+    if ("DT" in user_mods and "HR" in user_mods) or \
+       ("DT" in user_mods and "RX" in user_mods) or \
+       ("NC" in user_mods and "HR" in user_mods):
+        target_pp_nomod /= 1.15  # уменьшает PP на ~15% для комбо
+
+    pp_tolerance = max(10, target_pp_nomod * 0.10)
+    min_pp = max(target_pp_nomod - pp_tolerance * 1.5, 0)
+    max_pp = target_pp_nomod + pp_tolerance
 
     maps = await app.state.services.database.fetch_all(
         "SELECT id, set_id, artist, title, version, mode, pp100 FROM maps "
@@ -1688,10 +1703,11 @@ async def r(ctx: Context) -> str | None:
     if not maps:
         return f"No maps found in PP range ({min_pp:.0f}-{max_pp:.0f})."
 
-    selected_map = random.choice(maps)
+    maps.sort(key=lambda m: abs(m["pp100"] - target_pp_nomod) * random.uniform(0.8, 1.2))
+    selected_map = random.choice(maps[:20])
+
     osu_path = BEATMAPS_PATH / f"{selected_map['id']}.osu"
     await ensure_osu_file_is_available(selected_map["id"])
-
     osu_url = f"https://osu.{app.settings.DOMAIN}/b/{selected_map['id']}"
 
     try:
@@ -1712,7 +1728,8 @@ async def r(ctx: Context) -> str | None:
         star_section = f" ({star_rating:.2f}★)"
 
     except Exception as e:
-        return f"Error processing map: {e}"
+        log(f"Error processing map: {e}", Ansi.LRED)
+        return "Error processing map"
 
     mode_str = ["std", "Taiko", "Catch", "Mania"][game_mode]
     mods_str = "NoMod" if not final_mods else "".join(final_mods)
