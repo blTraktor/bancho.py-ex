@@ -1064,6 +1064,8 @@ if(not app.settings.DISALLOW_OLD_CLIENTS):
         # update their recent score
         score.player.recent_scores[score.mode] = score
 
+        score.player.increment_session_games()
+
         """ score submission charts """
 
         # charts are only displayed for passes vanilla gamemodes.
@@ -1682,6 +1684,8 @@ async def osuSubmitModularSelector(
 
     # update their recent score
     score.player.recent_scores[score.mode] = score
+
+    score.player.increment_session_games()
 
     """ score submission charts """
 

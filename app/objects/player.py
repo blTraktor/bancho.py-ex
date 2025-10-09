@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 from typing import TypedDict
 from typing import cast
 
+from requests import session
+
 import app.metrics
 import databases.core
 
@@ -271,6 +273,7 @@ class Player:
 
         self.stats: dict[GameMode, ModeData] = {}
         self.status = Status()
+        self.session_games: int = 0
 
         # userids, not player objects
         self.friends: set[int] = set()
@@ -998,6 +1001,18 @@ class Player:
                     Grade.A: row["a_count"],
                 },
             )
+
+    def increment_session_games(self) -> None:
+        """Increase session games and notify player via bot"""
+        self.session_games += 1
+
+        if self.session_games % 50 == 0 and not self.is_bot_client:
+            try:
+                self.send_bot(
+                    f"Plays in this session: {self.session_games}"
+                )
+            except Exception as e:
+                log(f"ERROR: Failed to send bot message: {e}")
 
     def update_latest_activity_soon(self) -> None:
         """Update the player's latest activity in the database."""
