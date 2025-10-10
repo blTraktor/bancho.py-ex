@@ -26,6 +26,7 @@ async def initialize_housekeeping_tasks() -> None:
                 _remove_expired_donation_privileges(interval=30 * 60),
                 _update_bot_status(interval=5 * 60),
                 _disconnect_ghosts(interval=OSU_CLIENT_MIN_PING_INTERVAL // 3),
+                _publish_player_count(interval=5),
             )
         },
     )
@@ -81,6 +82,18 @@ async def _disconnect_ghosts(interval: int) -> None:
                 log(f"Auto-dced {player}.", Ansi.LMAGENTA)
                 player.logout()
 
+
+async def _publish_player_count(interval: int) -> None:
+    """Publish current player count to Redis, excluding bots."""
+    while True:
+        try:
+            # Count only non-bot players
+            player_count = sum(1 for p in app.state.sessions.players if not p.is_bot_client)
+            await app.state.services.redis.publish('bancho:online_count', str(player_count))
+        except Exception as e:
+            log(f"Error publishing player count: {e}", Ansi.LRED)
+        
+        await asyncio.sleep(interval)
 
 async def _update_bot_status(interval: int) -> None:
     """Re roll the bot status, every `interval`."""
